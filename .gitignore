@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Audio files (large)
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Model files (too large for GitHub)
+whisper_pharma_model/
+runpod_backup/whisper_pharma_model/
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Training outputs (large datasets)
+training_output/audio/
+training_output/dataset/
+gpu_benchmark_output/
+remote_output/
+xtts_test_cpu/
+xtts_indian_test/
+vast_ai_backup/
+
+# Keep only metadata CSVs, exclude audio
+**/wavs/
+
+# ESPnet artifacts
+exp/
+data/
+conf/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Miniconda installer
+Miniconda3-*.sh
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+
+# Backup directories
+backup/
+runpod_backup/
+
+# Specific large files
+Recording_13.wav
+recorded_audio.wav
+

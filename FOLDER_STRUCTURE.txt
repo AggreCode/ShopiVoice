@@ -1,0 +1,53 @@
+# Cleaned Voice Training Pipeline Structure
+
+## Essential Files (Current Directory)
+
+### Core Scripts
+- xtts_indian_pipeline.py          (11KB)  - XTTS v2 TTS engine with Indian voice ⭐
+- test_xtts_indian.py              (3.9KB) - Test runner and main interface
+- updated_smart_dataset_generator.py(19KB) - Smart dataset generator
+- data_augmentation.py             (24KB)  - Audio augmentation
+- espnet_setup.py                  (24KB)  - ESPnet integration
+- run_training_pipeline.sh         (4KB)   - Main pipeline runner script ⭐
+
+### Supporting Scripts  
+- slot_parser.py                   (28KB)  - NLU slot parsing
+- wfst_decoder.py                  (22KB)  - WFST decoder
+- grammar_fst.py                   (23KB)  - Grammar FST builder
+- kenlm_builder.py                 (20KB)  - KenLM language model
+
+### Data & Config
+- pharma_glossary.json             (3.4KB) - Pharmaceutical terms
+- requirements.txt                 (400B)  - Python dependencies
+- README.md                        (5KB)   - Documentation ⭐
+
+### Dependencies (Base Classes)
+- backup/dataset_generator.py     (Required by updated_smart_dataset_generator.py)
+
+### Reference Audio (External)
+- /home/biswajit-mohanty/Recording_13.wav - Indian English voice sample
+
+## Removed/Backed Up
+
+### Backup Location
+- ../upgraded_voice_pipeline_backup/  - Full backup of original folder
+
+### Removed Items
+- Test outputs: vctk_test_male/, tts_test_gtts/, etc.
+- Old scripts: enhanced_tts_pipeline.py, generate_training_data.py
+- Duplicate pipelines: voice_pipeline_enhanced.py
+- Cache: __pycache__/
+
+## Usage
+
+1. Generate TTS Dataset:
+   ./run_training_pipeline.sh 5000
+
+2. Or manual:
+   python3 test_xtts_indian.py --dataset-size 5000 --output-dir output
+
+3. Check output:
+   ls output/audio/train/wavs/
+   cat output/audio/train/metadata.csv
+
+Total Size: ~160KB (scripts only, no test data)

@@ -1,0 +1,91 @@
+{
+  "quantity_glossary": {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "3": "3", "three": "3",
+    "4": "4", "four": "4",
+    "5": "5", "five": "5", 
+    "6": "6", "six": "6",
+    "7": "7", "seven": "7",
+    "8": "8", "eight": "8",
+    "9": "9", "nine": "9",
+    "10": "10", "ten": "10",
+    "11": "11", "eleven": "11",
+    "12": "12", "twelve": "12",
+    "13": "13", "thirteen": "13",
+    "14": "14", "fourteen": "14",
+    "15": "15", "fifteen": "15",
+    "16": "16", "sixteen": "16",
+    "17": "17", "seventeen": "17",
+    "18": "18", "eighteen": "18",
+    "19": "19", "nineteen": "19",
+    "20": "20", "twenty": "20",
+    "30": "30", "thirty": "30",
+    "40": "40", "forty": "40",
+    "50": "50", "fifty": "50",
+    "60": "60", "sixty": "60",
+    "70": "70", "seventy": "70",
+    "80": "80", "eighty": "80",
+    "90": "90", "ninety": "90",
+    "100": "100", "hundred": "100",
+    "1000": "1000", "thousand": "1000",
+    "0.5": "0.5", "half": "0.5",
+    "0.25": "0.25", "quarter": "0.25"
+  },
+  
+  "unit_glossary": {
+    "kg": "kg", "kilogram": "kg", "kilo": "kg",
+    "gram": "gram", "grams": "gram",
+    "mg": "mg", "milligram": "mg",
+    "ml": "ml", "milliliter": "ml",
+    "liter": "liter", "litre": "liter", "liters": "liter",
+    "pcs": "pcs", "packet": "pcs", "piece": "pcs", "pieces": "pcs",
+    "strip": "strip", "strips": "strip", 
+    "tablet": "tablet", "tablets": "tablet", "tab": "tablet",
+    "bottle": "bottle", "bottles": "bottle",
+    "box": "box", "boxes": "box"
+  },
+  
+  "product_glossary": {
+    "paracetamol": "paracetamol", "para": "paracetamol",
+    "crocin": "crocin", "crosin": "crocin", "crossin": "crocin", "crossing": "crocin",
+    "dolo": "dolo 650", "dolo650": "dolo 650", "dolo 6 50": "dolo 650",
+    "calpol": "calpol", "kalpol": "calpol", "cal pol": "calpol",
+    
+    "cetirizine": "cetirizine", "cetzine": "cetirizine", "cetrizine": "cetirizine", 
+    "allergy": "cetirizine", "allergy medicine": "cetirizine",
+    
+    "omez": "omez", "omeprazole": "omez", "gas medicine": "omez",
+    
+    "benadryl": "benadryl", "benedryl": "benadryl", "benadryl syrup": "benadryl",
+    "cough syrup": "cough syrup", "cough medicine": "cough syrup",
+    
+    "bandaid": "band-aid", "plaster": "band-aid", "band aid": "band-aid",
+    "dettol": "dettol", "detol": "dettol", "antiseptic": "dettol",
+    
+    "vicks": "vicks vaporub", "vaporub": "vicks vaporub", "vicks vaporub": "vicks vaporub",
+    "becosules": "becosules", "becosule": "becosules", "bikasul": "becosules",
+    "vitamin": "multivitamin", "multivitamin": "multivitamin",
+    
+    "aspirin": "aspirin", "disprin": "disprin",
+    "ibuprofen": "ibuprofen", "brufen": "ibuprofen",
+    "metformin": "metformin", "glucophage": "metformin",
+    "atorvastatin": "atorvastatin", "lipitor": "atorvastatin",
+    "amlodipine": "amlodipine", "norvasc": "amlodipine",
+    "lisinopril": "lisinopril", "zestril": "lisinopril",
+    "albuterol": "albuterol", "ventolin": "albuterol",
+    "amoxicillin": "amoxicillin", "amoxil": "amoxicillin",
+    "azithromycin": "azithromycin", "zithromax": "azithromycin",
+    "ciprofloxacin": "ciprofloxacin", "cipro": "ciprofloxacin",
+    "levothyroxine": "levothyroxine", "synthroid": "levothyroxine",
+    "gabapentin": "gabapentin", "neurontin": "gabapentin",
+    "sertraline": "sertraline", "zoloft": "sertraline",
+    "fluoxetine": "fluoxetine", "prozac": "fluoxetine"
+  },
+  
+  "templates": [
+    "{quantity} {unit} {product}",
+    "{product} {quantity} {unit}"
+  ]
+}
