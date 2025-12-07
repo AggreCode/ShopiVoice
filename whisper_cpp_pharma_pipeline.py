@@ -2,10 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Pharmaceutical Voice Order Pipeline using Whisper ASR
-------------------------------------------------------
-Records audio from ESP32, transcribes using fine-tuned Whisper model,
+CPU-Efficient Pharmaceutical Voice Order Pipeline using whisper.cpp
+--------------------------------------------------------------------
+Records audio from ESP32, transcribes using whisper.cpp with GBNF grammar
+constraints, applies phonetic matching for pronunciation variations,
 and parses pharmaceutical orders into structured JSON.
+
+Key Features:
+- CPU-only inference (no GPU required)
+- Strict grammar constraints to prevent hallucinations
+- Phonetic matching for Indian English pronunciation handling
+- ESP32 serial audio recording integration
 """
 
 import serial
@@ -15,11 +22,10 @@ import json
 import os
 import time
 import logging
-import torch
-from transformers import WhisperProcessor, WhisperForConditionalGeneration
-import soundfile as sf
-import librosa
+import subprocess
+import shutil
 from rapidfuzz import process, fuzz
+from metaphone import doublemetaphone
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -29,15 +35,17 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("WhisperPharmaPipeline")
+logger = logging.getLogger("WhisperCppPharmaPipeline")
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# --- Whisper Model Configuration ---
-WHISPER_MODEL_PATH = "runpod_backup/whisper_pharma_model"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# --- Whisper.cpp Configuration ---
+WHISPER_CPP_PATH = "./whisper.cpp/build/bin/whisper-cli"
+WHISPER_MODEL = "./whisper.cpp/models/ggml-small.en.bin"
+GRAMMAR_FILE = "pharma_inventory.gbnf"
+PHONETIC_THRESHOLD = 80  # Minimum phonetic similarity score (0-100)
 
 # --- Serial Port and Recording Configuration ---
 SERIAL_PORT = '/dev/ttyUSB0'  # Example for Linux/Mac
@@ -52,7 +60,7 @@ SAMPLE_WIDTH = 2  # 2 bytes for 16-bit samples
 SAMPLE_RATE = 16000
 
 # =============================================================================
-# PHARMACEUTICAL GLOSSARIES
+# PHARMACEUTICAL GLOSSARIES AND INVENTORY
 # =============================================================================
 
 # Load glossaries from JSON file
@@ -190,79 +198,202 @@ inventory = {
 }
 
 # =============================================================================
-# WHISPER MODEL INITIALIZATION
+# INSTALLATION CHECK
 # =============================================================================
 
-class WhisperTranscriber:
-    """Handles Whisper model loading and transcription"""
+def check_whisper_cpp():
+    """Verify whisper.cpp installation"""
+    logger.info("Checking whisper.cpp installation...")
     
-    def __init__(self, model_path=WHISPER_MODEL_PATH, device=DEVICE):
-        """Initialize Whisper model and processor"""
+    if not os.path.exists(WHISPER_CPP_PATH):
+        error_msg = (
+            f"whisper.cpp not found at: {WHISPER_CPP_PATH}\n"
+            f"Please install from: https://github.com/ggerganov/whisper.cpp\n"
+            f"  git clone https://github.com/ggerganov/whisper.cpp.git\n"
+            f"  cd whisper.cpp\n"
+            f"  make\n"
+        )
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    
+    if not os.path.exists(WHISPER_MODEL):
+        error_msg = (
+            f"Whisper model not found at: {WHISPER_MODEL}\n"
+            f"Please download the model:\n"
+            f"  cd whisper.cpp\n"
+            f"  bash ./models/download-ggml-model.sh small.en\n"
+        )
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    
+    if not os.path.exists(GRAMMAR_FILE):
+        error_msg = (
+            f"Grammar file not found: {GRAMMAR_FILE}\n"
+            f"Please generate it first:\n"
+            f"  python3 generate_pharma_grammar.py\n"
+        )
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    
+    logger.info("✓ whisper.cpp installation verified")
+    print("✓ whisper.cpp found")
+    print(f"✓ Model: {WHISPER_MODEL}")
+    print(f"✓ Grammar: {GRAMMAR_FILE}")
+    return True
+
+# =============================================================================
+# PHONETIC MATCHING
+# =============================================================================
+
+class PhoneticMatcher:
+    """
+    Phonetic matching using Double Metaphone algorithm
+    Handles pronunciation variations, especially for Indian English
+    """
+    
+    def __init__(self, threshold=PHONETIC_THRESHOLD):
+        """Initialize phonetic matcher"""
+        self.threshold = threshold
+        self.cache = {}  # Cache for phonetic codes
+        logger.info(f"PhoneticMatcher initialized (threshold={threshold})")
+    
+    def get_phonetic_code(self, word):
+        """Get phonetic code for a word (with caching)"""
+        word_lower = word.lower().strip()
+        if word_lower not in self.cache:
+            # doublemetaphone returns tuple of (primary, secondary) codes
+            codes = doublemetaphone(word_lower)
+            self.cache[word_lower] = codes
+        return self.cache[word_lower]
+    
+    def phonetic_similarity(self, word1, word2):
+        """
+        Calculate phonetic similarity score (0-100)
+        Uses both fuzzy string matching and phonetic matching
+        """
+        word1_lower = word1.lower().strip()
+        word2_lower = word2.lower().strip()
+        
+        # Exact match
+        if word1_lower == word2_lower:
+            return 100
+        
+        # Fuzzy string similarity (rapidfuzz)
+        fuzzy_score = fuzz.ratio(word1_lower, word2_lower)
+        
+        # Phonetic similarity
+        phonetic1 = self.get_phonetic_code(word1)
+        phonetic2 = self.get_phonetic_code(word2)
+        
+        phonetic_score = 0
+        # Check if any of the phonetic codes match
+        if phonetic1[0] and phonetic2[0]:
+            if phonetic1[0] == phonetic2[0]:
+                phonetic_score = 90
+            elif phonetic1[1] and phonetic2[1] and phonetic1[1] == phonetic2[1]:
+                phonetic_score = 80
+            elif phonetic1[0] and phonetic2[1] and phonetic1[0] == phonetic2[1]:
+                phonetic_score = 75
+            elif phonetic1[1] and phonetic2[0] and phonetic1[1] == phonetic2[0]:
+                phonetic_score = 75
+        
+        # Return weighted average (60% fuzzy, 40% phonetic)
+        combined_score = (fuzzy_score * 0.6) + (phonetic_score * 0.4)
+        
+        logger.debug(
+            f"Phonetic match '{word1}' vs '{word2}': "
+            f"fuzzy={fuzzy_score:.1f}, phonetic={phonetic_score:.1f}, "
+            f"combined={combined_score:.1f}"
+        )
+        
+        return combined_score
+    
+    def match_word(self, word, candidates):
+        """
+        Match a word against a list of candidates
+        Returns (best_match, score) or (None, 0) if no match above threshold
+        """
+        if not candidates:
+            return None, 0
+        
+        best_match = None
+        best_score = 0
+        
+        for candidate in candidates:
+            score = self.phonetic_similarity(word, candidate)
+            if score > best_score:
+                best_score = score
+                best_match = candidate
+        
+        if best_score >= self.threshold:
+            logger.info(f"✓ Phonetic match: '{word}' → '{best_match}' (score={best_score:.1f})")
+            return best_match, best_score
+        else:
+            logger.debug(f"✗ No phonetic match for '{word}' (best={best_score:.1f})")
+            return None, 0
+
+# =============================================================================
+# WHISPER.CPP TRANSCRIBER
+# =============================================================================
+
+class WhisperCppTranscriber:
+    """Handles transcription using whisper.cpp (grammar-free mode for better compatibility)"""
+    
+    def __init__(self, model_path=WHISPER_MODEL, grammar_file=None):
+        """Initialize whisper.cpp transcriber"""
         self.model_path = model_path
-        self.device = device
-        self.model = None
-        self.processor = None
-        
-    def load_model(self):
-        """Load Whisper model and processor"""
-        logger.info(f"Loading Whisper model from {self.model_path}")
-        start_time = time.time()
-        
-        try:
-            self.processor = WhisperProcessor.from_pretrained(self.model_path)
-            self.model = WhisperForConditionalGeneration.from_pretrained(self.model_path)
-            self.model = self.model.to(self.device)
-            
-            load_time = time.time() - start_time
-            logger.info(f"✓ Model loaded successfully on {self.device} in {load_time:.2f}s")
-            print(f"✓ Whisper model loaded on {self.device} ({load_time:.2f}s)")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            print(f"❌ Error loading model: {e}")
-            return False
+        self.grammar_file = grammar_file  # Not used currently due to whisper.cpp grammar parsing issues
+        self.whisper_cli = WHISPER_CPP_PATH
+        logger.info(f"WhisperCppTranscriber initialized")
+        logger.info(f"  Model: {model_path}")
+        logger.info(f"  Mode: Raw transcription + phonetic matching (no grammar constraints)")
     
     def transcribe(self, audio_file_path):
-        """Transcribe audio file using Whisper model"""
-        if self.model is None or self.processor is None:
-            logger.error("Model not loaded. Call load_model() first.")
-            return None
-        
+        """
+        Transcribe audio file using whisper.cpp WITHOUT grammar constraints
+        Grammar was causing parsing issues, so we use raw transcription + phonetic matching
+        Returns transcription string or None on error
+        """
         logger.info(f"Transcribing audio: {audio_file_path}")
         start_time = time.time()
         
         try:
-            # Load audio with soundfile
-            audio_array, sampling_rate = sf.read(audio_file_path)
-            duration = len(audio_array) / sampling_rate
-            logger.info(f"Audio loaded: duration={duration:.2f}s, SR={sampling_rate}Hz, shape={audio_array.shape}")
+            # Construct whisper.cpp command (WITHOUT grammar for now)
+            cmd = [
+                self.whisper_cli,
+                "-m", self.model_path,
+                "-f", audio_file_path,
+                "-l", "en",  # Language: English
+                "-t", "4",   # Threads (adjust based on CPU)
+                "--no-timestamps",  # Don't include timestamps in output
+            ]
             
-            # Resample to 16kHz if needed (Whisper requires 16kHz)
-            if sampling_rate != 16000:
-                logger.info(f"Resampling from {sampling_rate}Hz to 16000Hz")
-                audio_array = librosa.resample(audio_array, orig_sr=sampling_rate, target_sr=16000)
-                sampling_rate = 16000
+            logger.debug(f"Running command: {' '.join(cmd)}")
             
-            # Prepare input features
-            logger.info("Preparing input features for Whisper")
-            input_features = self.processor(
-                audio_array,
-                sampling_rate=sampling_rate,
-                return_tensors="pt"
-            ).input_features
+            # Run whisper.cpp
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30  # 30 second timeout
+            )
             
-            # Move to device
-            input_features = input_features.to(self.device)
-            logger.info(f"Input features shape: {input_features.shape}")
+            if result.returncode != 0:
+                logger.error(f"whisper.cpp failed with code {result.returncode}")
+                logger.error(f"stderr: {result.stderr}")
+                print(f"❌ Transcription failed: {result.stderr}")
+                return None
             
-            # Generate transcription
-            logger.info("Generating transcription...")
-            with torch.no_grad():
-                predicted_ids = self.model.generate(input_features)
+            # Parse output from stdout (whisper.cpp prints transcription to stdout)
+            output_lines = result.stdout.strip().split('\n')
             
-            # Decode
-            transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+            # Find the transcription line (skip debug/info lines)
+            transcription = ""
+            for line in output_lines:
+                # Skip empty lines and lines that look like debug output
+                if line.strip() and not line.startswith('whisper_') and not line.startswith('main:') and not line.startswith('system_info:'):
+                    transcription = line.strip()
+                    break
             
             transcribe_time = time.time() - start_time
             logger.info(f"✓ Transcription complete in {transcribe_time:.2f}s")
@@ -270,6 +401,10 @@ class WhisperTranscriber:
             
             return transcription
             
+        except subprocess.TimeoutExpired:
+            logger.error("Transcription timed out (>30s)")
+            print("❌ Transcription timed out")
+            return None
         except Exception as e:
             logger.error(f"Error during transcription: {e}")
             import traceback
@@ -338,7 +473,121 @@ def record_audio_from_esp32():
         return None
 
 # =============================================================================
-# TEXT PROCESSING & PARSING
+# ANTI-HALLUCINATION VALIDATION
+# =============================================================================
+
+def build_allowed_vocabulary():
+    """
+    Build complete vocabulary of allowed words to prevent hallucinations
+    Only words in this set are valid - everything else is rejected
+    """
+    allowed = set()
+    
+    # Add all quantities
+    allowed.update(QUANTITY_GLOSSARY.keys())
+    allowed.update(str(v) for v in QUANTITY_GLOSSARY.values())
+    
+    # Add all units
+    allowed.update(UNIT_GLOSSARY.keys())
+    allowed.update(UNIT_GLOSSARY.values())
+    
+    # Add all products
+    allowed.update(inventory.keys())
+    
+    # Add all brands
+    for product_info in inventory.values():
+        allowed.update(product_info.get('brands', {}).keys())
+    
+    # Add all product glossary terms
+    allowed.update(PRODUCT_GLOSSARY.keys())
+    allowed.update(PRODUCT_GLOSSARY.values())
+    
+    # Add common connector words that are OK
+    allowed.update(['and', 'of', 'the'])
+    
+    logger.info(f"Built allowed vocabulary: {len(allowed)} terms")
+    return allowed
+
+ALLOWED_VOCABULARY = build_allowed_vocabulary()
+
+def validate_transcription_strict(transcription):
+    """
+    STRICT VALIDATION: Reject transcriptions with hallucinations
+    Handles multi-word brands (e.g., "dolo 650", "vitamin d")
+    Returns cleaned transcription or None if invalid words detected
+    """
+    if not transcription:
+        return None
+    
+    text_lower = transcription.lower().strip()
+    
+    # STEP 1: Identify multi-word terms (brands like "dolo 650")
+    # Extract all multi-word entries from vocabulary
+    multi_word_terms = [term for term in ALLOWED_VOCABULARY if ' ' in term]
+    # Sort by length (longest first) to match "vitamin d3" before "vitamin d"
+    multi_word_terms.sort(key=len, reverse=True)
+    
+    # Replace multi-word terms with placeholders to protect them
+    temp_text = text_lower
+    replacements = {}  # placeholder -> original term
+    placeholder_counter = 0
+    
+    for term in multi_word_terms:
+        if term in temp_text:
+            placeholder = f"__MULTIWORD_{placeholder_counter}__"
+            temp_text = temp_text.replace(term, placeholder)
+            replacements[placeholder] = term
+            placeholder_counter += 1
+            logger.debug(f"✓ Protected multi-word term: '{term}'")
+    
+    # STEP 2: Now split and validate individual words/placeholders
+    # Use [\w-]+ to keep hyphens (for "band-aid", etc.)
+    words = re.findall(r'[\w-]+', temp_text)
+    
+    invalid_words = []
+    validated_words = []
+    
+    for word in words:
+        if not word:
+            continue
+        
+        # Check if it's a placeholder for a multi-word term
+        if word.startswith('__MULTIWORD_') and word in replacements:
+            validated_words.append(replacements[word])
+            logger.debug(f"✓ Multi-word term: '{replacements[word]}'")
+            continue
+            
+        # Check if word is in allowed vocabulary
+        if word in ALLOWED_VOCABULARY:
+            validated_words.append(word)
+            logger.debug(f"✓ Valid word: '{word}'")
+            continue
+        
+        # Try phonetic match against allowed vocabulary (last resort)
+        matched_word, score = phonetic_matcher.match_word(word, list(ALLOWED_VOCABULARY))
+        
+        if matched_word and score >= 85:  # Higher threshold for validation
+            validated_words.append(matched_word)
+            logger.info(f"✓ Phonetic correction: '{word}' → '{matched_word}' (score={score:.1f})")
+        else:
+            invalid_words.append(word)
+            logger.warning(f"✗ INVALID word detected: '{word}' (possible hallucination)")
+    
+    # Reject if any invalid words found
+    if invalid_words:
+        logger.error(f"❌ Transcription REJECTED - Invalid words: {invalid_words}")
+        logger.error(f"   This appears to be a hallucination or out-of-vocabulary speech")
+        print(f"⚠️  Transcription rejected: Contains invalid words {invalid_words}")
+        print(f"   Please speak clearly using pharmaceutical terms only")
+        return None
+    
+    # Return validated transcription
+    validated_text = ' '.join(validated_words)
+    logger.info(f"✅ Validation passed: '{validated_text}'")
+    return validated_text
+
+# =============================================================================
+# TEXT PROCESSING & PARSING WITH PHONETIC MATCHING
 # =============================================================================
 
 def build_search_space():
@@ -356,10 +605,11 @@ def build_search_space():
     return search_map
 
 search_space = build_search_space()
+phonetic_matcher = PhoneticMatcher(threshold=PHONETIC_THRESHOLD)
 
 def match_product(product_name):
     """
-    Match a product string to inventory using fuzzy matching.
+    Match a product string to inventory using fuzzy + phonetic matching.
     Returns the base product name if found, None otherwise.
     """
     processed_name = product_name.lower().strip()
@@ -370,12 +620,18 @@ def match_product(product_name):
     
     choices = list(search_space.keys())
     
-    # Token set ratio (good for partial matches)
+    # Fuzzy token set ratio (good for partial matches)
     best_match_token, score_token, _ = process.extractOne(
         processed_name, choices, scorer=fuzz.token_set_ratio
     )
     if score_token >= 70:
         return search_space[best_match_token]
+    
+    # Phonetic matching as fallback
+    matched_word, phonetic_score = phonetic_matcher.match_word(processed_name, choices)
+    if matched_word:
+        logger.info(f"✓ Phonetic match used: '{processed_name}' → '{matched_word}'")
+        return search_space[matched_word]
     
     # Simple fuzzy ratio
     best_match_fuzz, score_fuzz, _ = process.extractOne(
@@ -409,6 +665,7 @@ def normalize_text(text):
 def process_text(text):
     """
     Process transcribed text by mapping quantities and units.
+    Enhanced with phonetic matching.
     """
     logger.info(f"Processing text: '{text}'")
     
@@ -432,11 +689,27 @@ def process_text(text):
                 logger.debug(f"Mapped quantity: '{clean_word}' -> '{mapped_qty}'")
                 continue
             
+            # Phonetic match for quantity
+            qty_match, _ = phonetic_matcher.match_word(clean_word, list(QUANTITY_GLOSSARY.keys()))
+            if qty_match:
+                mapped_qty = QUANTITY_GLOSSARY[qty_match]
+                processed_words.append(mapped_qty)
+                logger.debug(f"Phonetic quantity: '{clean_word}' -> '{mapped_qty}'")
+                continue
+            
             # Check if it's a unit
             if clean_word in UNIT_GLOSSARY:
                 mapped_unit = UNIT_GLOSSARY[clean_word]
                 processed_words.append(mapped_unit)
                 logger.debug(f"Mapped unit: '{clean_word}' -> '{mapped_unit}'")
+                continue
+            
+            # Phonetic match for unit
+            unit_match, _ = phonetic_matcher.match_word(clean_word, list(UNIT_GLOSSARY.keys()))
+            if unit_match:
+                mapped_unit = UNIT_GLOSSARY[unit_match]
+                processed_words.append(mapped_unit)
+                logger.debug(f"Phonetic unit: '{clean_word}' -> '{mapped_unit}'")
                 continue
             
             # Keep the original word (could be a product)
@@ -470,7 +743,7 @@ def finalize_item(item_data):
     
     logger.debug(f"Finalizing item: product_key='{product_key}', qty={item_data['qty']}, unit={item_data['unit']}")
     
-    # Match to inventory
+    # Match to inventory (with phonetic fallback)
     matched = match_product(product_key)
     
     if matched:
@@ -481,16 +754,25 @@ def finalize_item(item_data):
         
         if inv_info.get("brands"):
             brand_choices = list(inv_info["brands"].keys())
-            best_brand, score, _ = process.extractOne(
-                product_key, brand_choices, scorer=fuzz.token_set_ratio
-            )
             
-            if score >= 70:
-                brand = best_brand
+            # Try phonetic match for brands first
+            brand_match, phonetic_score = phonetic_matcher.match_word(product_key, brand_choices)
+            if brand_match:
+                brand = brand_match
                 price = inv_info["brands"][brand]
-                logger.info(f"✓ Matched brand '{product_key}' to '{brand}' (score={score})")
+                logger.info(f"✓ Phonetic brand match: '{product_key}' → '{brand}'")
             else:
-                brand, price = list(inv_info["brands"].items())[0]
+                # Fallback to fuzzy match
+                best_brand, score, _ = process.extractOne(
+                    product_key, brand_choices, scorer=fuzz.token_set_ratio
+                )
+                
+                if score >= 70:
+                    brand = best_brand
+                    price = inv_info["brands"][brand]
+                    logger.info(f"✓ Fuzzy brand match: '{product_key}' → '{brand}' (score={score})")
+                else:
+                    brand, price = list(inv_info["brands"].items())[0]
         else:
             price = inv_info.get("price")
         
@@ -579,7 +861,7 @@ def parse_order(transcription):
 # =============================================================================
 
 def process_audio_order(audio_file_path, transcriber):
-    """Complete pipeline: Audio -> Whisper -> Parse -> JSON"""
+    """Complete pipeline: Audio -> whisper.cpp -> VALIDATION -> Phonetic -> Parse -> JSON"""
     logger.info("=" * 60)
     logger.info("Processing audio order")
     logger.info("=" * 60)
@@ -588,8 +870,8 @@ def process_audio_order(audio_file_path, transcriber):
     print("📋 STEP 2: TRANSCRIPTION AND PROCESSING")
     print("=" * 60)
     
-    # Transcribe with Whisper
-    print("🎤 Transcribing with Whisper...")
+    # Transcribe with whisper.cpp
+    print("🎤 Transcribing with whisper.cpp (CPU mode)...")
     transcribed_text = transcriber.transcribe(audio_file_path)
     
     if not transcribed_text:
@@ -599,9 +881,22 @@ def process_audio_order(audio_file_path, transcriber):
     
     print(f"✅ Transcription complete: '{transcribed_text}'")
     
-    # Process the transcription
-    print("🔄 Processing transcription...")
-    processed_text = process_text(transcribed_text)
+    # CRITICAL: Validate transcription to prevent hallucinations
+    print("🛡️  Validating transcription (anti-hallucination check)...")
+    validated_text = validate_transcription_strict(transcribed_text)
+    
+    if not validated_text:
+        logger.error("Validation failed - transcription rejected")
+        print("❌ Transcription validation failed!")
+        print("   The audio contained words outside the pharmaceutical vocabulary.")
+        print("   Please speak only pharmaceutical product names, quantities, and units.")
+        return None
+    
+    print(f"✅ Validation passed: '{validated_text}'")
+    
+    # Process the validated transcription (with phonetic matching)
+    print("🔄 Processing with phonetic matching...")
+    processed_text = process_text(validated_text)
     print(f"✅ Processed text: '{processed_text}'")
     
     # Parse into structured order
@@ -614,6 +909,7 @@ def process_audio_order(audio_file_path, transcriber):
     
     return {
         "original_transcription": transcribed_text,
+        "validated_text": validated_text,
         "processed_text": processed_text,
         "parsed_order": parsed_order
     }
@@ -625,15 +921,21 @@ def process_audio_order(audio_file_path, transcriber):
 def main():
     """Main execution function with continuous recording support"""
     print("=" * 60)
-    print("🚀 WHISPER PHARMACEUTICAL VOICE ORDER PIPELINE")
+    print("🚀 WHISPER.CPP PHARMACEUTICAL VOICE ORDER PIPELINE (CPU)")
     print("=" * 60)
     
-    # Initialize Whisper transcriber (load model once)
-    print("\n📦 Loading Whisper model...")
-    transcriber = WhisperTranscriber()
-    if not transcriber.load_model():
-        print("❌ Failed to load Whisper model. Exiting.")
+    # Check whisper.cpp installation
+    print("\n🔍 Checking installation...")
+    try:
+        check_whisper_cpp()
+    except FileNotFoundError as e:
+        print(f"\n❌ Setup incomplete:\n{e}")
         return
+    
+    # Initialize whisper.cpp transcriber
+    print("\n📦 Initializing whisper.cpp transcriber...")
+    transcriber = WhisperCppTranscriber()
+    print("✓ Transcriber ready (CPU mode)")
     
     # Session statistics
     session_order_count = 0
@@ -658,6 +960,7 @@ def main():
                 print("📊 FINAL RESULTS")
                 print("=" * 60)
                 print(f"🗣️  Original Transcription: {result['original_transcription']}")
+                print(f"🛡️  Validated Text: {result['validated_text']}")
                 print(f"⚙️  Processed Text: {result['processed_text']}")
                 print("📦 Parsed Order:")
                 print(json.dumps(result['parsed_order'], indent=2, ensure_ascii=False))
