@@ -43,9 +43,9 @@ logger = logging.getLogger("WhisperGrammarPipeline")
 # =============================================================================
 
 # --- Whisper.cpp Configuration ---
-WHISPER_CPP_PATH = "./whisper.cpp/build/bin/whisper-cli"
+WHISPER_CPP_PATH = "./whisper.cpp/build/bin/whisper-cli"  # Updated: now uses whisper-cli (not main)
 WHISPER_MODEL = "./whisper.cpp/models/ggml-small.en.bin"
-PHONETIC_THRESHOLD = 85  # High threshold for minimal corrections
+PHONETIC_THRESHOLD = 50  # Aggressive matching - always returns best score
 
 # --- Serial Port and Recording Configuration ---
 SERIAL_PORT = '/dev/ttyUSB0'
@@ -61,128 +61,48 @@ SAMPLE_RATE = 16000
 # PHARMACEUTICAL GLOSSARIES AND INVENTORY
 # =============================================================================
 
-# Load glossaries
-GLOSSARY_FILE = "pharma_glossary.json"
+# No transcription fixes - rely purely on grammar + aggressive phonetic matching
 
-def load_glossaries():
-    """Load pharmaceutical glossaries from JSON file"""
-    try:
-        with open(GLOSSARY_FILE, 'r') as f:
-            glossaries = json.load(f)
-        logger.info(f"Loaded glossaries from {GLOSSARY_FILE}")
-        return (
-            glossaries.get("quantity_glossary", {}),
-            glossaries.get("unit_glossary", {}),
-            glossaries.get("product_glossary", {})
-        )
-    except FileNotFoundError:
-        logger.warning(f"Glossary file {GLOSSARY_FILE} not found, using defaults")
-        return {}, {}, {}
-
-QUANTITY_GLOSSARY, UNIT_GLOSSARY, PRODUCT_GLOSSARY = load_glossaries()
-
-# Pharmaceutical Inventory
+# Pharmaceutical Inventory (Flattened - all products independent)
 inventory = {
-    "paracetamol": {
-        "brands": {"crocin": 20, "dolo 650": 32, "calpol": 25},
-        "unit": "strip",
-        "price": 20
-    },
-    "cetirizine": {
-        "brands": {},
-        "unit": "strip",
-        "price": 20
-    },
-    "ibuprofen": {
-        "brands": {"brufen": 30},
-        "unit": "strip",
-        "price": 30
-    },
-    "amoxicillin": {
-        "brands": {"amoxil": 40},
-        "unit": "strip",
-        "price": 40
-    },
-    "azithromycin": {
-        "brands": {"azithral": 90},
-        "unit": "strip",
-        "price": 90
-    },
-    "omeprazole": {
-        "brands": {},
-        "unit": "strip",
-        "price": 35
-    },
-    "metformin": {
-        "brands": {},
-        "unit": "strip",
-        "price": 25
-    },
-    "amlodipine": {
-        "brands": {},
-        "unit": "strip",
-        "price": 30
-    },
-    "atorvastatin": {
-        "brands": {},
-        "unit": "strip",
-        "price": 35
-    },
-    "losartan": {
-        "brands": {},
-        "unit": "strip",
-        "price": 40
-    },
-    "levothyroxine": {
-        "brands": {"synthroid": 50, "eltroxin": 45},
-        "unit": "strip",
-        "price": 45
-    },
-    "aspirin": {
-        "brands": {},
-        "unit": "strip",
-        "price": 10
-    },
-    "fluoxetine": {
-        "brands": {"prozac": 80},
-        "unit": "strip",
-        "price": 80
-    },
-    "sertraline": {
-        "brands": {"zoloft": 85},
-        "unit": "strip",
-        "price": 85
-    },
-    "multivitamin": {
-        "brands": {"centrum": 150},
-        "unit": "bottle",
-        "price": 150
-    },
-    "vitamin d": {
-        "brands": {},
-        "unit": "strip",
-        "price": 60
-    },
-    "calcium": {
-        "brands": {"shelcal": 120},
-        "unit": "strip",
-        "price": 120
-    },
-    "dettol": {
-        "brands": {},
-        "unit": "bottle",
-        "price": 80
-    },
-    "band-aid": {
-        "brands": {},
-        "unit": "box",
-        "price": 50
-    },
-    "cough syrup": {
-        "brands": {},
-        "unit": "bottle",
-        "price": 100
-    }
+    # Generic medicines
+    "paracetamol": {"unit": "strip", "price": 20},
+    "cetirizine": {"unit": "strip", "price": 20},
+    "ibuprofen": {"unit": "strip", "price": 30},
+    "amoxicillin": {"unit": "strip", "price": 40},
+    "azithromycin": {"unit": "strip", "price": 90},
+    "omeprazole": {"unit": "strip", "price": 35},
+    "metformin": {"unit": "strip", "price": 25},
+    "amlodipine": {"unit": "strip", "price": 30},
+    "atorvastatin": {"unit": "strip", "price": 35},
+    "losartan": {"unit": "strip", "price": 40},
+    "levothyroxine": {"unit": "strip", "price": 45},
+    "aspirin": {"unit": "strip", "price": 10},
+    "fluoxetine": {"unit": "strip", "price": 80},
+    "sertraline": {"unit": "strip", "price": 85},
+    "multivitamin": {"unit": "bottle", "price": 150},
+    "vitamind": {"unit": "strip", "price": 60},
+    "calcium": {"unit": "strip", "price": 120},
+    
+    # Brands (all independent products now)
+    "crocin": {"unit": "strip", "price": 20},
+    "dolo 650": {"unit": "strip", "price": 32},
+    "calpol": {"unit": "strip", "price": 25},
+    "brufen": {"unit": "strip", "price": 30},
+    "amoxil": {"unit": "strip", "price": 40},
+    "azithral": {"unit": "strip", "price": 90},
+    "synthroid": {"unit": "strip", "price": 50},
+    "eltroxin": {"unit": "strip", "price": 45},
+    "prozac": {"unit": "strip", "price": 80},
+    "zoloft": {"unit": "strip", "price": 85},
+    "centrum": {"unit": "bottle", "price": 150},
+    "shelcal": {"unit": "strip", "price": 120},
+    "ranidom": {"unit": "bottle", "price": 131},
+    
+    # Other products
+    "dettol": {"unit": "bottle", "price": 80},
+    "bandaid": {"unit": "box", "price": 50},
+    "cough syrup": {"unit": "bottle", "price": 100},
 }
 
 # =============================================================================
@@ -198,69 +118,44 @@ def escape_gbnf_string(s):
 def generate_inventory_grammar():
     """
     Generates inline GBNF grammar string from inventory.
-    Uses the 'Leading Space' fix: root ::= [ ]? command [ ]?
+    Simplified - no boundary guards (not supported in whisper.cpp GBNF).
     
-    This is the CRITICAL function that prevents hallucinations.
+    This function constrains vocabulary to reduce hallucinations.
     """
-    # 1. Collect all products (sorted by length descending for proper matching)
+    # 1. Collect all products and sort by length (longer first for better matching)
     products = []
     
-    # Add all product names
     for product_name in inventory.keys():
         products.append(product_name.lower())
     
-    # Add all brands (WITH SPACES - important for multi-word brands)
-    for product_info in inventory.values():
-        for brand_name in product_info.get('brands', {}).keys():
-            # Add brand as-is
-            products.append(brand_name.lower())
-            # Also add without spaces for matching
-            products.append(brand_name.lower().replace(" ", ""))
+    # Sort by length descending (longer matches first)
+    products.sort(key=len, reverse=True)
     
-    # Add product glossary terms
-    for alias, product in PRODUCT_GLOSSARY.items():
-        products.append(alias.lower())
-    
-    # Remove duplicates and sort by length (descending)
-    products = sorted(set(products), key=len, reverse=True)
-    
-    # 2. Build product rules
+    # 2. Build product rules (all products in one list)
     product_rules = " | ".join([f'"{escape_gbnf_string(p)}"' for p in products])
     
-    # 3. Collect all units
-    units = []
-    for unit in set(UNIT_GLOSSARY.keys()) | set(UNIT_GLOSSARY.values()):
-        units.append(unit.lower())
-    # Add standard units
-    units.extend(["kg", "g", "mg", "ml", "liter", "litre", "packet", "pcs", "piece", 
-                  "box", "strip", "strips", "bottle", "bottles", "tablet", "tablets", "tab"])
-    units = sorted(set(units))
+    # 3. Build units (simple list, no variants)
+    units = ["strip", "bottle", "box", "tablet", "kg", "gram", "mg", "ml", "liter"]
     unit_rules = " | ".join([f'"{u}"' for u in units])
     
-    # 4. Build quantity rules
-    # Numeric quantities 0-100
+    # 4. Build quantity rules (numeric only: 0-100)
     numeric_rules = [f'"{i}"' for i in range(0, 101)]
+    quantity_rules = " | ".join(numeric_rules)
     
-    # Word quantities from glossary
-    word_quantities = list(QUANTITY_GLOSSARY.keys())
-    word_rules = [f'"{word}"' for word in word_quantities]
-    
-    quantity_rules = " | ".join(numeric_rules + word_rules)
-    
-    # 5. Define the Grammar with Leading Space fix
-    # CRITICAL: "root ::= [ ]? order [ ]?" allows leading/trailing spaces
-    gbnf_grammar = f"""root      ::= [ ]? order [ ]?
-order     ::= item | item [ ]? "," [ ]? order | item " and " order
-item      ::= quantity [ ]+ unit [ ]+ product | product [ ]+ quantity [ ]+ unit
-quantity  ::= {quantity_rules}
-unit      ::= {unit_rules}
-product   ::= {product_rules}
+    # 5. Define the Grammar
+    # Single pattern: quantity + unit + product
+    gbnf_grammar = f"""root     ::= [ ]? order [ ]?
+order    ::= item | item [ ]? "," [ ]? order
+item     ::= quantity [ ]+ unit [ ]+ product
+quantity ::= {quantity_rules}
+unit     ::= {unit_rules}
+product  ::= {product_rules}
 """
     
     logger.info(f"✓ Generated GBNF grammar")
     logger.info(f"  Products: {len(products)}")
     logger.info(f"  Units: {len(units)}")
-    logger.info(f"  Quantities: {len(numeric_rules) + len(word_rules)}")
+    logger.info(f"  Quantities: 0-100 (numeric only)")
     logger.info(f"  Grammar size: {len(gbnf_grammar)} bytes")
     
     return gbnf_grammar
@@ -278,6 +173,7 @@ class WhisperCppTranscriber:
     def __init__(self, model_path=None, whisper_cpp_path=None):
         self.model_path = model_path or WHISPER_MODEL
         self.whisper_cpp_path = whisper_cpp_path or WHISPER_CPP_PATH
+        self.grammar_file = "pharma_inventory.gbnf"  # Grammar file path
         
         # Verify installation
         if not os.path.exists(self.whisper_cpp_path):
@@ -292,13 +188,18 @@ class WhisperCppTranscriber:
                 f"Run: cd whisper.cpp && bash ./models/download-ggml-model.sh small.en"
             )
         
-        # Generate grammar once during initialization
+        # Generate grammar and write to file
         logger.info("Initializing WhisperCppTranscriber with GRAMMAR constraints...")
-        self.grammar = generate_inventory_grammar()
+        grammar_content = generate_inventory_grammar()
+        
+        # Write grammar to file (CRITICAL: whisper.cpp needs file-based grammar)
+        with open(self.grammar_file, 'w') as f:
+            f.write(grammar_content)
+        logger.info(f"✓ Grammar written to {self.grammar_file}")
         
         logger.info("✅ WhisperCppTranscriber ready")
         logger.info(f"   Model: {self.model_path}")
-        logger.info(f"   Mode: GRAMMAR-CONSTRAINED (inline GBNF)")
+        logger.info(f"   Mode: GRAMMAR-CONSTRAINED (file-based GBNF)")
     
     def transcribe(self, audio_file):
         """
@@ -310,14 +211,21 @@ class WhisperCppTranscriber:
             return None
         
         logger.info(f"🎤 Transcribing: {audio_file}")
-        logger.info(f"🔒 Grammar constraints: ACTIVE")
+        logger.info(f"🔒 Grammar constraints: ACTIVE (strict mode)")
+        logger.info(f"📄 Grammar file: {self.grammar_file}")
         
-        # Build command with inline grammar
+        # Build command - pass filename to --grammar (whisper-cli will read it)
         cmd = [
             self.whisper_cpp_path,
             "-m", self.model_path,
             "-f", audio_file,
-            "--grammar", self.grammar,  # ← INLINE GRAMMAR STRING
+            "--grammar", self.grammar_file,  # ← Pass filename (whisper-cli reads file)
+            "--grammar-rule", "root",  # ← CRITICAL: Specify top-level GBNF rule
+            "--grammar-penalty", "7.0",  # ← OPTIMAL: Captures all items while guiding toward grammar
+            "--entropy-thold", "10.0",  # ← Allow high confusion without fallback
+            "--logprob-thold", "-100.0",  # ← Don't give up even if probability is low
+            "--temperature", "0.4",  # ← Allow exploration to find valid grammar paths
+            "--max-len", "0",  # ← No length limit (let it transcribe full audio)
             "-l", "en",
             "-t", "4",
             "--no-timestamps",
@@ -382,13 +290,14 @@ class WhisperCppTranscriber:
 
 class MinimalPhoneticMatcher:
     """
-    Lightweight phonetic matcher for known pronunciation variations.
-    Uses Double Metaphone algorithm.
+    Aggressive phonetic matcher for pronunciation variations.
+    Uses Double Metaphone + Fuzzy matching.
+    ALWAYS returns the best match, even if score is low.
     """
     
-    def __init__(self, threshold=85):
+    def __init__(self, threshold=50):
         self.threshold = threshold
-        logger.info(f"Phonetic matcher initialized (threshold={threshold})")
+        logger.info(f"🔊 Aggressive Phonetic Matcher initialized (threshold={threshold}%, always returns best match)")
     
     def phonetic_score(self, word1, word2):
         """Calculate phonetic similarity score using Double Metaphone"""
@@ -410,7 +319,10 @@ class MinimalPhoneticMatcher:
         return ratio
     
     def match_product(self, transcribed_word, inventory_list):
-        """Match transcribed word to inventory product using phonetics"""
+        """
+        Match transcribed word to inventory product using phonetics.
+        ALWAYS returns the best match, even if score is below threshold.
+        """
         best_match = None
         best_score = 0
         
@@ -420,12 +332,16 @@ class MinimalPhoneticMatcher:
                 best_score = score
                 best_match = product
         
-        if best_score >= self.threshold:
-            if best_match != transcribed_word:
-                logger.info(f"   Phonetic: '{transcribed_word}' → '{best_match}' (score={best_score:.1f})")
+        # ALWAYS return best match (no None return)
+        if best_match:
+            if best_score >= self.threshold:
+                logger.info(f"   ✅ Phonetic: '{transcribed_word}' → '{best_match}' (score={best_score:.1f}%)")
+            else:
+                logger.warning(f"   ⚠️  Low-confidence match: '{transcribed_word}' → '{best_match}' (score={best_score:.1f}%)")
             return best_match, best_score
         
-        return None, 0
+        # Fallback (should never happen if inventory_list is not empty)
+        return inventory_list[0] if inventory_list else None, 0
 
 phonetic_matcher = MinimalPhoneticMatcher(threshold=PHONETIC_THRESHOLD)
 
@@ -434,214 +350,88 @@ phonetic_matcher = MinimalPhoneticMatcher(threshold=PHONETIC_THRESHOLD)
 # =============================================================================
 
 def normalize_text(text):
-    """Minimal normalization - grammar already constrains output"""
+    """
+    Minimal normalization - no glossary fixes.
+    Pure reliance on grammar + aggressive phonetic matching.
+    """
     text = text.lower().strip()
-    # Remove extra spaces
+    # Collapse multiple spaces
     text = re.sub(r'\s+', ' ', text)
-    return text
-
-def process_text(text):
-    """
-    Minimal processing - grammar already enforced correct structure.
-    Only apply known corrections from glossaries.
-    """
-    text = normalize_text(text)
-    
-    # Apply unit glossary (singular/plural normalization)
-    for variant, standard in UNIT_GLOSSARY.items():
-        text = re.sub(r'\b' + variant + r'\b', standard, text)
-    
-    # Apply product glossary (known aliases)
-    for alias, standard in PRODUCT_GLOSSARY.items():
-        text = re.sub(r'\b' + alias + r'\b', standard, text)
-    
-    logger.info(f"   Processed: '{text}'")
     return text
 
 # =============================================================================
 # ORDER PARSING
 # =============================================================================
 
-def parse_quantity(quantity_str):
-    """Parse quantity from string (number or word)"""
-    quantity_str = quantity_str.strip().lower()
-    
-    # Check if it's in word glossary
-    if quantity_str in QUANTITY_GLOSSARY:
-        return float(QUANTITY_GLOSSARY[quantity_str])
-    
-    # Try to parse as number
-    try:
-        return float(quantity_str)
-    except ValueError:
-        return None
-
 def parse_order(text):
     """
-    Parse order from grammar-constrained text.
-    Pattern: quantity unit product OR product quantity unit
-    """
-    text = text.lower().strip()
-    # Normalize hyphens to spaces (e.g., "three-strip" → "three strip")
-    text = text.replace('-', ' ')
-    logger.info(f"Parsing order: '{text}'")
+    Simplified parser for grammar-constrained text.
+    Pattern: quantity unit product (e.g., "5 bottle fluoxetine")
     
-    # Split by common separators
-    items_text = re.split(r',|\band\b', text)
+    Strategy:
+    1. Split by comma
+    2. For each item, try regex pattern matching
+    3. Exact product match first
+    4. Phonetic fallback if needed
+    """
+    text = normalize_text(text)
+    logger.info(f"Parsing: '{text}'")
     
     parsed_items = []
+    all_products = list(inventory.keys())
+    valid_units = ["strip", "bottle", "box", "tablet", "kg", "gram", "mg", "ml", "liter"]
     
-    for item_text in items_text:
-        item_text = item_text.strip()
-        if not item_text:
-            continue
+    # Build regex pattern to match: quantity unit product_name
+    # Product names can be multi-word (e.g., "dolo 650", "cough syrup")
+    # We need to match until we hit the next quantity or end of string
+    units_pattern = "|".join(valid_units)
+    
+    # Pattern: number + unit + everything until next number+unit or end
+    pattern = r'(\d+(?:\.\d+)?)\s+(' + units_pattern + r')\s+(.+?)(?=\s+\d+\s+(?:' + units_pattern + r')|$)'
+    
+    matches = re.finditer(pattern, text)
+    
+    for match in matches:
+        quantity_str, unit, product_name = match.groups()
+        quantity = float(quantity_str)
+        product_name = product_name.strip().rstrip(',')  # Remove trailing comma if present
         
-        logger.debug(f"  Parsing item: '{item_text}'")
+        logger.debug(f"  Extracted: qty={quantity}, unit={unit}, product='{product_name}'")
         
-        # Build search spaces
-        all_products = list(inventory.keys())
-        all_brands = []
-        brand_to_product = {}  # Map brand → product
-        
-        for product_name, product_info in inventory.items():
-            for brand_name in product_info.get('brands', {}).keys():
-                all_brands.append(brand_name)
-                brand_to_product[brand_name] = product_name
-        
-        all_units = list(set(UNIT_GLOSSARY.values()))
-        
-        # Try to match product or brand
+        # Match product: exact first, then phonetic
         matched_product = None
-        matched_brand = None
         
-        # First, try exact product match
-        for product in all_products:
-            if product in item_text:
-                matched_product = product
-                logger.debug(f"    Matched product: '{product}'")
-                break
-        
-        # If no product, try brand match
-        if not matched_product:
-            # First try exact match
-            for brand in all_brands:
-                if brand in item_text:
-                    matched_brand = brand
-                    matched_product = brand_to_product[brand]
-                    logger.debug(f"    Matched brand: '{brand}' → product: '{matched_product}'")
-                    break
-            
-            # If no exact match, try fuzzy match
-            if not matched_product:
-                best_brand = None
-                best_score = 0
-                
-                # Try matching each brand against the full text
-                for brand in all_brands:
-                    similarity = fuzz.partial_ratio(brand, item_text)
-                    if similarity > best_score:
-                        best_score = similarity
-                        best_brand = brand
-                
-                if best_score >= 75:  # 75% similarity threshold
-                    matched_brand = best_brand
-                    matched_product = brand_to_product[best_brand]
-                    logger.debug(f"    Fuzzy matched brand: '{best_brand}' in '{item_text}' (sim={best_score}) → product: '{matched_product}'")
-
-        
-        # Try phonetic match if no exact match
-        if not matched_product:
-            words = item_text.split()
-            for word in words:
-                # Try matching against products
-                match, score = phonetic_matcher.match_product(word, all_products)
-                if match:
-                    matched_product = match
-                    logger.debug(f"    Phonetic matched product: '{word}' → '{match}'")
-                    break
-                
-                # Try matching against brands
-                match, score = phonetic_matcher.match_product(word, all_brands)
-                if match:
-                    matched_brand = match
-                    matched_product = brand_to_product[match]
-                    logger.debug(f"    Phonetic matched brand: '{word}' → '{match}' → '{matched_product}'")
-                    break
-        
-        if not matched_product:
-            logger.warning(f"    No product/brand found in: '{item_text}'")
-            continue
-        
-        # Try to match unit
-        matched_unit = None
-        for unit in all_units:
-            if unit in item_text:
-                matched_unit = unit
-                logger.debug(f"    Matched unit: '{unit}'")
-                break
-        
-        if not matched_unit:
-            matched_unit = inventory[matched_product]['unit']
-            logger.debug(f"    Using default unit: '{matched_unit}'")
-        
-        # Try to extract quantity (exclude numbers from matched brand/product name)
-        quantity = None
-        words = item_text.split()
-        
-        # Filter out words that are part of the matched brand or product
-        brand_words = matched_brand.split() if matched_brand else []
-        product_words = matched_product.split()
-        
-        for word in words:
-            # Skip if this word is part of the brand or product name
-            if word in brand_words or word in product_words:
-                continue
-            
-            qty = parse_quantity(word)
-            if qty is not None:
-                quantity = qty
-                logger.debug(f"    Matched quantity: {qty} from '{word}'")
-                break
-        
-        # If still no quantity, look for standalone numbers (not in brand/product)
-        if quantity is None:
-            # Remove brand and product from text
-            temp_text = item_text
-            if matched_brand:
-                temp_text = temp_text.replace(matched_brand, "")
-            temp_text = temp_text.replace(matched_product, "")
-            
-            number_match = re.search(r'\b(\d+)\b', temp_text)
-            if number_match:
-                quantity = float(number_match.group(1))
-                logger.debug(f"    Extracted quantity: {quantity} (regex, after removing brand/product)")
-        
-        if quantity is None:
-            quantity = 1.0
-            logger.debug(f"    Using default quantity: 1")
-        
-        # Build item
-        product_info = inventory[matched_product]
-        
-        # Use matched brand if available, otherwise default
-        if matched_brand:
-            brand = matched_brand
-            price_per_unit = product_info['brands'].get(matched_brand, product_info['price'])
+        if product_name in all_products:
+            matched_product = product_name
+            logger.debug(f"    ✓ Exact product match: '{product_name}'")
         else:
-            brand = list(product_info['brands'].keys())[0] if product_info['brands'] else matched_product.title()
-            price_per_unit = product_info['brands'].get(brand, product_info['price'])
+            # Phonetic fallback
+            match, score = phonetic_matcher.match_product(product_name, all_products)
+            if match:
+                matched_product = match
+                logger.info(f"    ✓ Phonetic match: '{product_name}' → '{match}' (score={score:.1f})")
+            else:
+                logger.warning(f"    ✗ No match for: '{product_name}'")
+                continue
+        
+        # Validate unit (use exact or default from inventory)
+        if unit not in valid_units:
+            unit = inventory[matched_product]['unit']
+            logger.debug(f"    Using default unit: '{unit}'")
+        
+        # Build item (no brand_name field in flat inventory)
+        product_info = inventory[matched_product]
         
         item = {
             "product_name": matched_product.title(),
-            "brand_name": brand.title(),
             "quantity": quantity,
-            "unit": matched_unit,
-            "price_per_unit": price_per_unit,
-            "total_price": quantity * price_per_unit
+            "unit": unit,
+            "price_per_unit": product_info['price'],
+            "total_price": quantity * product_info['price']
         }
         
         parsed_items.append(item)
-        logger.info(f"   ✓ Parsed: {quantity} {matched_unit} {matched_product}")
+        logger.info(f"   ✓ Parsed: {quantity} {unit} {matched_product}")
     
     return parsed_items
 
@@ -676,9 +466,9 @@ def process_audio_order(audio_file_path, transcriber):
     
     print(f"✅ Grammar-constrained output: '{transcribed_text}'")
     
-    # Minimal processing (mostly just glossary normalization)
+    # Minimal normalization (lowercase, trim, transcription fixes)
     print("🔄 Applying minimal normalization...")
-    processed_text = process_text(transcribed_text)
+    processed_text = normalize_text(transcribed_text)
     print(f"✅ Normalized: '{processed_text}'")
     
     # Parse into structured order
@@ -704,7 +494,10 @@ def process_audio_order(audio_file_path, transcriber):
 
 def record_audio_from_esp32(serial_port=SERIAL_PORT, baud_rate=BAUD_RATE, 
                             output_filename=WAVE_OUTPUT_FILENAME):
-    """Record audio from ESP32 via serial port"""
+    """
+    Record audio from ESP32 via serial port (button-controlled)
+    Compatible with esp32_button_streamer.ino
+    """
     print("\n" + "=" * 60)
     print("📋 STEP 1: AUDIO RECORDING FROM ESP32")
     print("=" * 60)
@@ -715,35 +508,54 @@ def record_audio_from_esp32(serial_port=SERIAL_PORT, baud_rate=BAUD_RATE,
         time.sleep(2)
         print("✅ Connected to ESP32")
         
-        print("🎙️  Say your pharmaceutical order clearly...")
+        # Clear any existing data
+        ser.reset_input_buffer()
+        
+        print("\n🎙️  Press the button on ESP32 to start recording")
+        print("   Say your pharmaceutical order clearly")
         print("   Example: 'paracetamol 3 strips'")
-        print("   Waiting for audio data...")
+        print("   Press button again to stop")
+        print("\n⏳ Waiting for button press...")
         
         audio_data = bytearray()
-        start_marker = b'START'
-        end_marker = b'END'
         recording = False
         
         while True:
             if ser.in_waiting > 0:
-                chunk = ser.read(ser.in_waiting)
+                line = ser.readline()
                 
-                if start_marker in chunk:
-                    recording = True
-                    print("📝 Recording started...")
-                    start_idx = chunk.find(start_marker) + len(start_marker)
-                    chunk = chunk[start_idx:]
-                
-                if recording:
-                    end_idx = chunk.find(end_marker)
-                    if end_idx != -1:
-                        audio_data.extend(chunk[:end_idx])
-                        print("✅ Recording completed")
+                try:
+                    # Try to decode as text (for status messages)
+                    text = line.decode('utf-8', errors='ignore').strip()
+                    
+                    if "Recording started" in text:
+                        recording = True
+                        print("📝 Recording started (LED should be ON)")
+                        print("   Speak now...")
+                        continue
+                    
+                    elif "Recording stopped" in text:
+                        print("✅ Recording stopped (LED should be OFF)")
                         break
-                    else:
-                        audio_data.extend(chunk)
+                    
+                    elif text and not recording:
+                        # Print ESP32 status messages while waiting
+                        print(f"   ESP32: {text}")
+                        continue
+                
+                except UnicodeDecodeError:
+                    # This is binary audio data, not text
+                    pass
+                
+                # If recording, collect binary audio data
+                if recording:
+                    audio_data.extend(line)
         
         ser.close()
+        
+        if len(audio_data) == 0:
+            print("⚠️  No audio data received")
+            return None
         
         # Save as WAV
         print(f"💾 Saving audio to {output_filename}...")
@@ -758,6 +570,11 @@ def record_audio_from_esp32(serial_port=SERIAL_PORT, baud_rate=BAUD_RATE,
         
         return output_filename
         
+    except serial.SerialException as e:
+        logger.error(f"Serial port error: {e}")
+        print(f"❌ Serial port error: {e}")
+        print(f"   Make sure ESP32 is connected to {serial_port}")
+        return None
     except Exception as e:
         logger.error(f"Recording error: {e}")
         print(f"❌ Recording failed: {e}")

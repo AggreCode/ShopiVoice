@@ -416,60 +416,98 @@ class WhisperCppTranscriber:
 # =============================================================================
 
 def record_audio_from_esp32():
-    """Records audio from ESP32 via serial port"""
+    """
+    Records audio from ESP32 via serial port (button-controlled)
+    Compatible with esp32_button_streamer.ino
+    """
     logger.info("Starting audio recording from ESP32")
+    
+    print("\n" + "=" * 60)
+    print("📋 STEP 1: AUDIO RECORDING FROM ESP32")
+    print("=" * 60)
+    
     try:
-        with serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=2) as ser:
-            logger.info(f"Connected to {SERIAL_PORT}")
-            print(f"✅ Connected to {SERIAL_PORT}.")
-            print("⏳ Please press the button on the device to START recording...")
-            
-            audio_data_chunks = []
-            is_recording_started = False
-            
-            while True:
-                chunk = ser.read(4096)
-                if chunk:
-                    if not is_recording_started:
+        print(f"📡 Connecting to ESP32 on {SERIAL_PORT}...")
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        time.sleep(2)
+        print("✅ Connected to ESP32")
+        
+        # Clear any existing data
+        ser.reset_input_buffer()
+        
+        print("\n🎙️  Press the button on ESP32 to start recording")
+        print("   Say your pharmaceutical order clearly")
+        print("   Example: 'dolo 650, 5 strips'")
+        print("   Press button again to stop")
+        print("\n⏳ Waiting for button press...")
+        
+        audio_data = bytearray()
+        recording = False
+        
+        while True:
+            if ser.in_waiting > 0:
+                line = ser.readline()
+                
+                try:
+                    # Try to decode as text (for status messages)
+                    text = line.decode('utf-8', errors='ignore').strip()
+                    
+                    if "Recording started" in text:
+                        recording = True
                         logger.info("Recording started")
-                        print("🎤 Recording started... (Press button again to STOP)")
-                        is_recording_started = True
-                    audio_data_chunks.append(chunk)
-                elif is_recording_started and not chunk:
-                    logger.info("Recording stopped")
-                    print("👍 Recording stopped.")
-                    break
-                elif not is_recording_started and not chunk:
-                    print("...Still waiting for recording to start...")
-            
-            if not audio_data_chunks:
-                logger.error("No audio data was recorded")
-                print("❌ No audio data was recorded.")
-                return None
-            
-            logger.info(f"Saving audio to '{WAVE_OUTPUT_FILENAME}'")
-            print(f"💾 Saving audio to '{WAVE_OUTPUT_FILENAME}'...")
-            
-            audio_data = b''.join(audio_data_chunks)
-            with wave.open(WAVE_OUTPUT_FILENAME, 'wb') as wf:
-                wf.setnchannels(CHANNELS)
-                wf.setsampwidth(SAMPLE_WIDTH)
-                wf.setframerate(SAMPLE_RATE)
-                wf.writeframes(audio_data)
-            
-            logger.info("File saved successfully")
-            print("✅ File saved successfully.")
-            return WAVE_OUTPUT_FILENAME
-            
+                        print("📝 Recording started (LED should be ON)")
+                        print("   Speak now...")
+                        continue
+                    
+                    elif "Recording stopped" in text:
+                        logger.info("Recording stopped")
+                        print("✅ Recording stopped (LED should be OFF)")
+                        break
+                    
+                    elif text and not recording:
+                        # Print ESP32 status messages while waiting
+                        print(f"   ESP32: {text}")
+                        continue
+                
+                except UnicodeDecodeError:
+                    # This is binary audio data, not text
+                    pass
+                
+                # If recording, collect binary audio data
+                if recording:
+                    audio_data.extend(line)
+        
+        ser.close()
+        
+        if len(audio_data) == 0:
+            logger.error("No audio data recorded")
+            print("⚠️  No audio data received")
+            return None
+        
+        # Save as WAV
+        logger.info(f"Saving audio to '{WAVE_OUTPUT_FILENAME}'")
+        print(f"💾 Saving audio to {WAVE_OUTPUT_FILENAME}...")
+        
+        with wave.open(WAVE_OUTPUT_FILENAME, 'wb') as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(SAMPLE_WIDTH)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(audio_data)
+        
+        duration = len(audio_data) / (SAMPLE_RATE * SAMPLE_WIDTH * CHANNELS)
+        logger.info("File saved successfully")
+        print(f"✅ Audio saved: {len(audio_data)} bytes ({duration:.2f}s)")
+        
+        return WAVE_OUTPUT_FILENAME
+        
     except serial.SerialException as e:
-        logger.error(f"Could not open serial port {SERIAL_PORT}: {e}")
-        print(f"❌ Error: Could not open serial port {SERIAL_PORT}.")
-        print(f"   Details: {e}")
-        print("   Please ensure the ESP32 is connected and you have selected the correct port.")
+        logger.error(f"Serial port error: {e}")
+        print(f"❌ Serial port error: {e}")
+        print(f"   Make sure ESP32 is connected to {SERIAL_PORT}")
         return None
     except Exception as e:
-        logger.error(f"An unexpected error occurred during recording: {e}")
-        print(f"❌ An unexpected error occurred during recording: {e}")
+        logger.error(f"Recording error: {e}")
+        print(f"❌ Recording failed: {e}")
         return None
 
 # =============================================================================
